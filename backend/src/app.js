@@ -21,6 +21,6 @@ import analyzeRoute from "./routes/analyze.routes.js"
 //---> now why this is done in future if we want to add more functionalities to this app then that would be easy to handle and clean!
 
 app.use("/userInput",analyzeRoute)
-export {app}
+export {app} 
 
 //http://localhost:3000/userInput/analyze
