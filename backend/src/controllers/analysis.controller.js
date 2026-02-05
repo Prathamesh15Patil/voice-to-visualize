@@ -51,7 +51,7 @@ const analysis = asyncHandler(async (req, res) => {
     command,
     // columns: parsedData.headers,
     numericColumns,
-    nonNumericColumns
+    nonNumericColumns,
   });
 
   // 3️⃣ Clean + Parse Gemini output
@@ -67,34 +67,114 @@ const analysis = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Could not understand command");
   }
 
-  // Auto-correct intent for wide CSV totals
+  // // Auto-upgrade top_n for wide CSVs (row_sum first)
+  // if (
+  //   intent.operation === "top_n" &&
+  //   !intent.metric &&
+  //   nonNumericColumns.length === 1 &&
+  //   numericColumns.length > 1
+  // ) {
+  //   intent.operation = "row_sum";
+  //   intent.groupBy = nonNumericColumns[0];
+  //   intent._applyTopN = true; // internal flag
+  // }
+
+  // // Auto-correct intent for wide CSV totals
+  // if (
+  //   intent.operation === "group_and_sum" &&
+  //   intent.metric === null &&
+  //   nonNumericColumns.length === 1 &&
+  //   numericColumns.length > 1
+  // ) {
+  //   intent.operation = "row_sum";
+  //   intent.groupBy = nonNumericColumns[0];
+  // }
+
+  // 🔁 Normalize intent for wide CSVs
+  // if (nonNumericColumns.length === 1 && numericColumns.length > 1) {
+  //   // Case 1: total demand per entity
+  //   if (intent.operation === "group_and_sum" && !intent.metric) {
+  //     intent.operation = "row_sum";
+  //     intent.groupBy = nonNumericColumns[0];
+  //   }
+
+  //   // Case 2: top N demand per entity
+  //   if (intent.operation === "top_n") {
+  //     intent.operation = "row_sum";
+  //     intent.groupBy = nonNumericColumns[0];
+  //     intent._applyTopN = true;
+  //   }
+  // }
+
+  // 🔁 Normalize intent
+  if (nonNumericColumns.length === 1 && numericColumns.length > 1) {
+    // Top-N on wide CSV
+    if (intent.operation === "top_n") {
+      intent.operation = "row_sum";
+      intent.groupBy = nonNumericColumns[0];
+      intent._applyTopN = true;
+    }
+
+    // Total per entity
+    if (intent.operation === "group_and_sum" && !intent.metric) {
+      intent.operation = "row_sum";
+      intent.groupBy = nonNumericColumns[0];
+    }
+  }
+
+  // Fallback: auto-fill groupBy for row_sum
   if (
-    intent.operation === "group_and_sum" &&
-    intent.metric === null &&
-    nonNumericColumns.length === 1 &&
-    numericColumns.length > 1
+    intent.operation === "row_sum" &&
+    (!intent.groupBy || intent.groupBy.length === 0) &&
+    nonNumericColumns.length === 1
   ) {
-    intent.operation = "row_sum";
     intent.groupBy = nonNumericColumns[0];
   }
 
-  // 4️⃣ Enforce CLOSED CONTRACT (no guessing)
-  const ALLOWED_OPERATIONS = ["group_and_sum", "top_n", "row_sum"];
-  const ALLOWED_CHARTS = ["bar", "line", "pie"];
+  // Fix wrong column names from Gemini
+  if (intent.groupBy && !parsedData.headers.includes(intent.groupBy)) {
+    const match = parsedData.headers.find(
+      (h) => h.toLowerCase() === intent.groupBy.toLowerCase(),
+    );
 
-  if (!intent.operation || !ALLOWED_OPERATIONS.includes(intent.operation)) {
+    if (match) {
+      intent.groupBy = match;
+    }
+  }
+
+  // 4️⃣ Enforce CLOSED CONTRACT (no guessing)
+  const allowedOperations = [
+    "group_and_sum",
+    "row_sum",
+    "top_n",
+    "time_series",
+  ];
+  const allowedCharts = ["bar", "line", "pie"];
+
+  // if (!intent.operation || !ALLOWED_OPERATIONS.includes(intent.operation)) {
+  //   throw new ApiError(400, "Unsupported operation");
+  // }
+
+  // // metric is required ONLY for group_and_sum
+  // if (intent.operation === "group_and_sum" && !intent.metric) {
+  //   throw new ApiError(400, "Metric is required for this operation");
+  // }
+
+  if (!allowedOperations.includes(intent.operation)) {
     throw new ApiError(400, "Unsupported operation");
   }
 
-  // metric is required ONLY for group_and_sum / top_n
-  if (
-    (intent.operation === "group_and_sum" || intent.operation === "top_n") &&
-    !intent.metric
-  ) {
+  if (intent.operation === "group_and_sum" && !intent.metric) {
     throw new ApiError(400, "Metric is required for this operation");
   }
 
-  if (!intent.groupBy) {
+  // Normalize groupBy properly
+  if (typeof intent.groupBy === "string") {
+    intent.groupBy = intent.groupBy.trim();
+  }
+
+  // Validate
+  if (!["time_series"].includes(intent.operation) && !intent.groupBy) {
     throw new ApiError(400, "groupBy is required");
   }
 
@@ -113,26 +193,55 @@ const analysis = asyncHandler(async (req, res) => {
 
   let analyticsResult;
 
-  if (intent.operation === "top_n") {
-    // top_n is a modifier → requires aggregation first
-    const aggregated = executeAnalytics(parsedData.rows, {
-      operation: "group_and_sum",
-      groupBy: intent.groupBy,
-      metric: intent.metric,
-    });
+  // if (intent.operation === "top_n" && intent.metric) {
+  //   // top_n is a modifier → requires aggregation first
+  //   const aggregated = executeAnalytics(parsedData.rows, {
+  //     operation: "group_and_sum",
+  //     groupBy: intent.groupBy,
+  //     metric: intent.metric,
+  //   });
 
-    analyticsResult = aggregated
-      .sort((a, b) => b.value - a.value)
-      .slice(0, limit);
-  } else if (intent.operation === "row_sum") {
-    // row_sum → sum ALL numeric columns per row
+  //   analyticsResult = aggregated
+  //     .sort((a, b) => b.value - a.value)
+  //     .slice(0, limit);
+  // }
+
+  // ---------- TIME SERIES ----------
+  if (intent.operation === "time_series") {
+    const timeCols = numericColumns;
+
+    let row = parsedData.rows[0];
+
+    // Filter by value (India, China, etc.)
+    if (intent.groupBy && intent.value) {
+      const found = parsedData.rows.find(
+        (r) => r[intent.groupBy] === intent.value,
+      );
+
+      if (found) {
+        row = found;
+      } else if (intent.value) {
+        throw new ApiError(400, "Requested entity not found in data");
+      }
+    }
+
+    analyticsResult = timeCols.map((col) => ({
+      label: col,
+      value: Number(row[col]) || 0,
+    }));
+
+    intent.chart = "line";
+  }
+
+  // ---------- ROW SUM ----------
+  else if (intent.operation === "row_sum") {
     analyticsResult = parsedData.rows.map((row) => {
       let total = 0;
 
       for (const key in row) {
         if (key !== intent.groupBy) {
-          const value = Number(row[key]);
-          if (!isNaN(value)) total += value;
+          const v = Number(row[key]);
+          if (!isNaN(v)) total += v;
         }
       }
 
@@ -141,16 +250,32 @@ const analysis = asyncHandler(async (req, res) => {
         value: total,
       };
     });
-  } else {
-    // group_and_sum or any future primary op
+
+    // Apply top N if needed-->changed this block to below
+    // Apply top-N whenever limit is present
+if (Number.isInteger(limit)) {
+  analyticsResult = analyticsResult
+    .sort((a, b) => b.value - a.value)
+    .slice(0, limit);
+}
+
+  }
+
+  // ---------- GROUP + SUM ----------
+  else {
     analyticsResult = executeAnalytics(parsedData.rows, config);
+
+    // Apply top-N if requested
+    if (intent.operation === "group_and_sum" && Number.isInteger(limit)) {
+      analyticsResult = analyticsResult
+        .sort((a, b) => b.value - a.value)
+        .slice(0, limit);
+    }
   }
 
   const chartData = formatChartData(analyticsResult);
 
-  const chartType = ALLOWED_CHARTS.includes(intent.chart)
-    ? intent.chart
-    : "bar";
+  const chartType = allowedCharts.includes(intent.chart) ? intent.chart : "bar";
 
   // 6️⃣ Final response
   return res.status(200).json({
