@@ -29,9 +29,11 @@ CSV schema:
 - Categorical columns: ${nonNumericColumns.join(", ")}
 - Numeric columns: ${numericColumns.join(", ")}
 
-Important:
-This CSV has ONE categorical column and MANY numeric columns.
-Each row represents one entity with multiple measurements.
+CSV structure may vary.
+It may contain multiple categorical and numeric columns.
+Do NOT assume any fixed schema.
+Use only the provided columns.
+Use "columns" to specify which numeric columns to operate on.
 
 --------------------------------
 SUPPORTED OPERATIONS
@@ -66,9 +68,14 @@ Use when user asks:
 RULES
 --------------------------------
 
-1. If user asks for "top / highest / most / largest":
-   → operation = "row_sum"
-   → set "limit"
+1. If user asks for top/highest:
+
+   If multiple numeric columns represent time/periods:
+   → row_sum
+
+   If single numeric metric exists:
+   → group_and_sum
+
 
 2. If user asks for totals across time:
    → operation = "row_sum"
@@ -80,8 +87,13 @@ RULES
    → groupBy MUST be one of:
      ${nonNumericColumns.join(", ")}
 
-5. For "time_series":
-   → groupBy MUST be null
+55. For "time_series":
+   → If user mentions an entity (country, product, etc):
+        groupBy = categorical column
+        value = mentioned entity
+   → If no entity is mentioned:
+        groupBy = null
+        value = null
 
 6. Never invent column names.
    Only use given columns.
@@ -97,10 +109,14 @@ No explanation.
 
 Schema:
 
+Schema:
+
 {
   "operation": "group_and_sum | row_sum | time_series",
   "groupBy": "string | null",
+  "value": "string | null",
   "metric": "string | null",
+  "columns": "string[] | null",
   "limit": number | null,
   "chart": "bar | line | pie"
 }

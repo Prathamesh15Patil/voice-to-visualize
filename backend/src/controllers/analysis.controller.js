@@ -106,6 +106,8 @@ const analysis = asyncHandler(async (req, res) => {
   //   }
   // }
 
+  console.log("FINAL INTENT:", intent);
+
   // 🔁 Normalize intent
   if (nonNumericColumns.length === 1 && numericColumns.length > 1) {
     // Top-N on wide CSV
@@ -142,6 +144,14 @@ const analysis = asyncHandler(async (req, res) => {
     }
   }
 
+  if (intent.columns) {
+    for (const col of intent.columns) {
+      if (!parsedData.headers.includes(col)) {
+        throw new ApiError(400, `Invalid column: ${col}`);
+      }
+    }
+  }
+
   // 4️⃣ Enforce CLOSED CONTRACT (no guessing)
   const allowedOperations = [
     "group_and_sum",
@@ -173,7 +183,26 @@ const analysis = asyncHandler(async (req, res) => {
     intent.groupBy = intent.groupBy.trim();
   }
 
-  // Validate
+  // ✅ Validate selected columns from Gemini
+  if (intent.columns) {
+    for (const col of intent.columns) {
+      if (!parsedData.headers.includes(col)) {
+        throw new ApiError(400, `Invalid column: ${col}`);
+      }
+    }
+  }
+  // Validate value for time_series
+  if (intent.operation === "time_series" && intent.value) {
+    const exists = parsedData.rows.some(
+      (r) => r[intent.groupBy] === intent.value,
+    );
+
+    if (!exists) {
+      throw new ApiError(400, `Value not found: ${intent.value}`);
+    }
+  }
+
+  // Validate groupBy
   if (!["time_series"].includes(intent.operation) && !intent.groupBy) {
     throw new ApiError(400, "groupBy is required");
   }
@@ -184,7 +213,8 @@ const analysis = asyncHandler(async (req, res) => {
   const config = {
     operation: intent.operation,
     groupBy: intent.groupBy,
-    metric: intent.metric,
+    metric: intent.metric, // only for group_and_sum
+    columns: intent.columns || numericColumns,
     limit,
   };
 
@@ -208,21 +238,36 @@ const analysis = asyncHandler(async (req, res) => {
 
   // ---------- TIME SERIES ----------
   if (intent.operation === "time_series") {
-    const timeCols = numericColumns;
+    const timeCols = intent.columns || numericColumns;
 
-    let row = parsedData.rows[0];
+    let row = null;
 
-    // Filter by value (India, China, etc.)
+    // Case 1: User specified entity (China, India, etc.)
     if (intent.groupBy && intent.value) {
-      const found = parsedData.rows.find(
-        (r) => r[intent.groupBy] === intent.value,
-      );
+      row = parsedData.rows.find(r => {
 
-      if (found) {
-        row = found;
-      } else if (intent.value) {
-        throw new ApiError(400, "Requested entity not found in data");
+      const cell = r[intent.groupBy];
+      const target = intent.value;
+
+      if (!cell || !target) return false;
+
+      return (
+        String(cell).trim().toLowerCase() ===
+        String(target).trim().toLowerCase()
+      );
+    });
+
+      if (!row) {
+        throw new ApiError(
+          400,
+          `No data found for ${intent.value} in ${intent.groupBy}`,
+        );
       }
+    }
+
+    // Case 2: No entity → fallback (first row)
+    else {
+      row = parsedData.rows[0];
     }
 
     analyticsResult = timeCols.map((col) => ({
@@ -238,11 +283,11 @@ const analysis = asyncHandler(async (req, res) => {
     analyticsResult = parsedData.rows.map((row) => {
       let total = 0;
 
-      for (const key in row) {
-        if (key !== intent.groupBy) {
-          const v = Number(row[key]);
-          if (!isNaN(v)) total += v;
-        }
+      const colsToUse = intent.columns || numericColumns;
+
+      for (const col of colsToUse) {
+        const v = Number(row[col]);
+        if (!isNaN(v)) total += v;
       }
 
       return {
@@ -253,12 +298,11 @@ const analysis = asyncHandler(async (req, res) => {
 
     // Apply top N if needed-->changed this block to below
     // Apply top-N whenever limit is present
-if (Number.isInteger(limit)) {
-  analyticsResult = analyticsResult
-    .sort((a, b) => b.value - a.value)
-    .slice(0, limit);
-}
-
+    if (Number.isInteger(limit)) {
+      analyticsResult = analyticsResult
+        .sort((a, b) => b.value - a.value)
+        .slice(0, limit);
+    }
   }
 
   // ---------- GROUP + SUM ----------
