@@ -11,6 +11,8 @@ const analysis = asyncHandler(async (req, res) => {
   //check for csv file
   //return res
 
+  console.log("BODY RAW:", req.body);
+  console.log("FILE:", req.file);
   const { command } = req.body; //later we also need to verify whether the command given is legit, related file uploaded!
   console.log("command : ", command);
 
@@ -244,18 +246,17 @@ const analysis = asyncHandler(async (req, res) => {
 
     // Case 1: User specified entity (China, India, etc.)
     if (intent.groupBy && intent.value) {
-      row = parsedData.rows.find(r => {
+      row = parsedData.rows.find((r) => {
+        const cell = r[intent.groupBy];
+        const target = intent.value;
 
-      const cell = r[intent.groupBy];
-      const target = intent.value;
+        if (!cell || !target) return false;
 
-      if (!cell || !target) return false;
-
-      return (
-        String(cell).trim().toLowerCase() ===
-        String(target).trim().toLowerCase()
-      );
-    });
+        return (
+          String(cell).trim().toLowerCase() ===
+          String(target).trim().toLowerCase()
+        );
+      });
 
       if (!row) {
         throw new ApiError(
