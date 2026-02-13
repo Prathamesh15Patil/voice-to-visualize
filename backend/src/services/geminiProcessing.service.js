@@ -83,11 +83,15 @@ RULES
 3. If user asks for trend or timeline:
    → operation = "time_series"
 
-4. For "row_sum" and "group_and_sum":
+4. If user says:
+    → top / highest / most / largest → sort = "desc"
+    → least / less than / lowest / smallest → sort = "asc"
+
+5. For "row_sum" and "group_and_sum":
    → groupBy MUST be one of:
      ${nonNumericColumns.join(", ")}
 
-55. For "time_series":
+6. For "time_series":
    → If user mentions an entity (country, product, etc):
         groupBy = categorical column
         value = mentioned entity
@@ -95,7 +99,7 @@ RULES
         groupBy = null
         value = null
 
-6. Never invent column names.
+7. Never invent column names.
    Only use given columns.
 
 --------------------------------
@@ -118,6 +122,7 @@ Schema:
   "metric": "string | null",
   "columns": "string[] | null",
   "limit": number | null,
+  "sort": "asc | desc | null",
   "chart": "bar | line | pie"
 }
 `,

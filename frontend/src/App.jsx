@@ -11,6 +11,7 @@ function App() {
   const [command, setCommand] = useState("");
   const [csvFile, setCsvFile] = useState(null);
   const [chartData, setChartData] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   const {
     transcript,
@@ -56,6 +57,8 @@ function App() {
     formData.append("micOn", micOn);
 
     try {
+      setLoading(true);
+
       const res = await fetch("/api/userInput/analyze", {
         method: "POST",
         body: formData,
@@ -74,6 +77,9 @@ function App() {
 
     } catch (error) {
       toast.error(error.message || "Server Error");
+    }
+    finally {
+      setLoading(false);
     }
   }
 
@@ -132,22 +138,25 @@ function App() {
             </form>
 
             <button
-              className='bg-emerald-800 text-white rounded-md px-4 py-2 font-semibold mt-6'
+              className='bg-emerald-800 text-white rounded-md px-4 py-2 font-semibold mt-6 
+               hover:bg-emerald-700 transition cursor-pointer'
               onClick={handleSubmit}
-            >Analyse</button>
+              disabled={loading}
+            >{loading ? "Analyzing..." : "Analyse"}</button>
 
-            <div className='mt-25 bg-amber-200 p-3'>
+            <div className='mt-20 bg-amber-200 p-3'>
               <p>NOTE : Currently system supports only top-n and trend commands</p>
-              <p>For Example : <br /> "Top 5 selling products",<br />"Gold trend of India in 2020"</p>
+              <p>For Example : <br /> "Top 5 selling products",<br />"Top 5 countries by least gold demand",<br />"Gold trend of India in 2020"</p>
             </div>
           </div>
         </div>
 
         {/* right div */}
-        <div className='right-side bg-fuchsia-100 w-[57vw] flex flex-col items-center gap-4 rounded-xl'>
+        <div className='right-side bg-fuchsia-100 w-[57vw] flex flex-col items-center gap-4 rounded-xl relative'>
           {/* chart section */}
           {/* <h1>{chartData.message}</h1> */}
-          <div className='w-[90%] p-4 bg-white border rounded-2xl mt-10'>
+
+          <div className='w-[90%] p-4 bg-white border rounded-2xl mt-16'>
             {chartData?.chart === "bar" ? (
               <Bar
                 data={{
@@ -181,6 +190,10 @@ function App() {
                 Unsupported chart type
               </p>
             )}
+          </div>
+
+          <div className={`${loading ? "block" : "hidden"} z-10 absolute top-32`}>
+            <img src="https://i.pinimg.com/originals/d2/b6/88/d2b688357b0c20cebde3745a3043108d.gif" alt="" />
           </div>
 
         </div>

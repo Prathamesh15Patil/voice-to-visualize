@@ -11,8 +11,6 @@ const analysis = asyncHandler(async (req, res) => {
   //check for csv file
   //return res
 
-  console.log("BODY RAW:", req.body);
-  console.log("FILE:", req.file);
   const { command } = req.body; //later we also need to verify whether the command given is legit, related file uploaded!
   console.log("command : ", command);
 
@@ -152,6 +150,11 @@ const analysis = asyncHandler(async (req, res) => {
         throw new ApiError(400, `Invalid column: ${col}`);
       }
     }
+  }
+
+  // Default sort behavior
+  if (!intent.sort) {
+    intent.sort = "desc"; // backward compatible
   }
 
   // 4️⃣ Enforce CLOSED CONTRACT (no guessing)
@@ -301,7 +304,9 @@ const analysis = asyncHandler(async (req, res) => {
     // Apply top-N whenever limit is present
     if (Number.isInteger(limit)) {
       analyticsResult = analyticsResult
-        .sort((a, b) => b.value - a.value)
+        .sort((a, b) => {
+          return intent.sort === "asc" ? a.value - b.value : b.value - a.value;
+        })
         .slice(0, limit);
     }
   }
@@ -318,7 +323,28 @@ const analysis = asyncHandler(async (req, res) => {
     }
   }
 
-  const chartData = formatChartData(analyticsResult);
+  let datasetLabel = "Value";
+
+  // group + sum
+  if (intent.operation === "group_and_sum" && intent.metric) {
+    datasetLabel = `Sum of ${intent.metric}`;
+  }
+
+  // row sum
+  else if (intent.operation === "row_sum") {
+    datasetLabel = "Total";
+  }
+
+  // time series
+  else if (intent.operation === "time_series") {
+    if (intent.value) {
+      datasetLabel = `Trend of ${intent.value}`;
+    } else {
+      datasetLabel = "Trend";
+    }
+  }
+
+  const chartData = formatChartData(analyticsResult, datasetLabel);
 
   const chartType = allowedCharts.includes(intent.chart) ? intent.chart : "bar";
 

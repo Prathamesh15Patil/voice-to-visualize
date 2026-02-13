@@ -1,11 +1,11 @@
-export const formatChartData = (data, label = "Sales") => {
+export const formatChartData = (data, label) => {
   return {
-    labels: data.map(item => item.label),
+    labels: data.map((item) => item.label),
     datasets: [
       {
-        label,
-        data: data.map(item => item.value)
-      }
-    ]
+        label: label || "Value",
+        data: data.map((item) => item.value),
+      },
+    ],
   };
 };
