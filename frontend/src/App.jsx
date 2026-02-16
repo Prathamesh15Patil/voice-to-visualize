@@ -58,8 +58,8 @@ function App() {
 
     try {
       setLoading(true);
-
-      const res = await fetch("/api/userInput/analyze", {
+      const BASE_URL = import.meta.env.VITE_API_URL || "";
+      const res = await fetch(`${BASE_URL}/api/userInput/analyze`, {
         method: "POST",
         body: formData,
       });
